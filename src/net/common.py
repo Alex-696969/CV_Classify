@@ -121,7 +121,7 @@ class ClassifyNetwork_Vgg16(nn.Module):
 
 
 
-def build_network(model_name:str, num_classes, cfg=None, freeze=None):
+def build_network(model_name:str, num_classes, cfg=None, freeze:Union[int, bool]=None):
     if model_name == 'vgg':
         return ClassifyNetwork_Vgg16(num_classes=num_classes, freeze= freeze)
     else:
