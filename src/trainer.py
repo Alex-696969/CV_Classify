@@ -11,14 +11,21 @@ from typing import Union, Literal
 import numpy as np
 import torch
 import torch.nn as nn
-from torchvision import models
 from torch import optim
 
 from datas.datas import Get_dataloaer
 from net.common import build_network
-from matplotlib import pyplot as plt
+
 from sklearn.metrics import accuracy_score
 import onnx
+from utils.log import Logger
+
+
+__all__ = {
+
+}
+
+
 
 
 class Trainer:
@@ -45,13 +52,18 @@ class Trainer:
         self.epoch = epoch
         self.lr = lr
 
+
         self.best_acc = 0
         self._epoch = 0
         self.train_batch = 0
         self.train_batch_num = len(self.train_dataloader)
 
         self.ouput_dir = os.path.join(os.path.dirname(__file__), 'output')
+        self.writer = Logger(output_dir=self.ouput_dir).build_logger()
+        # 记录训练集损失，验证集的准确率，学习率变化
         self.opt, self.lr_scheduler = self._opt_lr()
+        self.writer.add_graph(model=self.module, input_to_model=torch.rand(1, 3, 224, 224), verbose=True)
+
 
 
     def _build_loss(self):
@@ -71,6 +83,8 @@ class Trainer:
             {"params": origin, "lr": self.lr}
         ], lr=self.lr)
         lr_scheduler = optim.lr_scheduler.LinearLR(optimizer=opter, start_factor=1, end_factor=0.1, total_iters=self.epoch)
+        self.writer.add_scalar('lr1_migrate', scalar_value=lr_scheduler.get_last_lr()[0], global_step=self._epoch)
+        self.writer.add_scalar('lr2_origin', scalar_value=lr_scheduler.get_last_lr()[1], global_step=self._epoch)
         return opter, lr_scheduler
 
     def _train_epoch(self):
@@ -82,16 +96,17 @@ class Trainer:
             x_batch_train = x_batch_train.to(device=self.device)
             y_batch_train = y_batch_train.to(device=self.device)
             # 测试用
-            # if k == 10:
-            #     break
-            # else:
-            #     k += 1
+            if k == 10:
+                break
+            else:
+                k += 1
             # 前向执行算损失
             score_batch = self.module(x_batch_train)
             loss_batch  = self.loss_fn(score_batch, y_batch_train)
             self.loss.append(loss_batch.item())
             print(f'第{self._epoch + 1}/{self.epoch}轮，第{self.train_batch}/{self.train_batch_num}个批次，loss:{loss_batch:.5f}')
-
+            # 每个批次记录一次损失
+            self.writer.add_scalar('loss_batch', scalar_value=loss_batch.item(), global_step=self.train_batch + self._epoch * self.train_batch_num)
             # 反向
             # 重置梯度
             self.opt.zero_grad()
@@ -101,7 +116,6 @@ class Trainer:
             self.opt.step()
             # 记录训练批次
             self.train_batch += 1
-
 
     def _metric(self):
         with torch.no_grad():
@@ -115,9 +129,9 @@ class Trainer:
                 y_pre_all.extend(score_test.cpu().numpy())
             y_pre_all = np.argmax(y_pre_all, axis=1)
             _acc = accuracy_score(y_true_all, y_pre_all)
-            print(f'第{self._epoch + 1}/{self.epoch}轮，验证集准确率为：{_acc}')
+            print(f'第{self._epoch}/{self.epoch}轮，验证集准确率为：{_acc}')
+            self.writer.add_scalar('acc', scalar_value=_acc, global_step=self._epoch)
             return _acc
-
 
     def _save(self, _acc):
         os.makedirs(self.ouput_dir, exist_ok=True)
@@ -142,12 +156,15 @@ class Trainer:
     def fit(self):
         for _epoch in range(self.epoch):
             # 保存当前训练轮数
-            self._epoch = _epoch
+            self._epoch = _epoch + 1
             self._train_epoch()
             # 每训练完一轮，算一次准确率
             _acc = self._metric()
             # 学习率更新
+
             self.lr_scheduler.step()
+            self.writer.add_scalar('lr1_migrate', scalar_value=self.lr_scheduler.get_last_lr()[0], global_step=self._epoch)
+            self.writer.add_scalar('lr2_origin', scalar_value=self.lr_scheduler.get_last_lr()[1], global_step=self._epoch)
             # 每训练完一轮保存一个检查点
             self._save(_acc=_acc)
 
