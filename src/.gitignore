@@ -1,0 +1,5 @@
+# 模型太大，不通过git方式上传
+*.onnx
+*.pkl
+*.onnx.data
+*.pt
