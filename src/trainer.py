@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torchvision import models
-from torch.optim import SGD
+from torch import optim
 
 from datas.datas import Get_dataloaer
 from net.common import build_network
@@ -28,7 +28,8 @@ class Trainer:
                  epoch:int = 100,
                  batch_size:int = 16,
                  freeze:Union[bool, int] = False,
-                 split_train_test_dir = True # 为true时会把all文件夹分成train,val两个文件夹
+                 split_train_test_dir = True, # 为true时会把all文件夹分成train,val两个文件夹
+                 lr:float = 0.01
                  ):
 
         self.train_dataloader, self.test_dataloader, self.class_name = Get_dataloaer(
@@ -41,35 +42,50 @@ class Trainer:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.loss_fn = self._build_loss()
         self.loss = []
-        self.opt = self._opt_lr()
-
         self.epoch = epoch
+        self.lr = lr
+
         self.best_acc = 0
         self._epoch = 0
-        self.train_batch = 1
+        self.train_batch = 0
         self.train_batch_num = len(self.train_dataloader)
 
         self.ouput_dir = os.path.join(os.path.dirname(__file__), 'output')
+        self.opt, self.lr_scheduler = self._opt_lr()
 
 
     def _build_loss(self):
         return nn.CrossEntropyLoss()
     def _opt_lr(self):
-        return SGD(params=self.module.parameters(), lr=0.001)
+        migrate, origin = [], []
+        for para in self.module.parameters():
+            # 如果该层没有冻结，且是迁移过来的参数，采用小的学习率
+            if para.requires_grad and (not para.is_init_rand) :
+                migrate.append(para)
+            # 如果该层没有冻结，且是初始化的参数，采用大的学习率
+            elif para.requires_grad and para.is_init_rand:
+                origin.append(para)
+        # 组内写了，用组内的，组内没写用外面的。
+        opter = optim.SGD([
+            {"params": migrate, "lr": self.lr * 0.1},
+            {"params": origin, "lr": self.lr}
+        ], lr=self.lr)
+        lr_scheduler = optim.lr_scheduler.LinearLR(optimizer=opter, start_factor=1, end_factor=0.1, total_iters=self.epoch)
+        return opter, lr_scheduler
 
     def _train_epoch(self):
         self.module.to(device=self.device)
         self.module.train()
+        self.train_batch = 1
         k = 0
         for x_batch_train, y_batch_train in self.train_dataloader:
             x_batch_train = x_batch_train.to(device=self.device)
             y_batch_train = y_batch_train.to(device=self.device)
-            if k == 10:
-                break
-            else:
-                k += 1
-
-
+            # 测试用
+            # if k == 10:
+            #     break
+            # else:
+            #     k += 1
             # 前向执行算损失
             score_batch = self.module(x_batch_train)
             loss_batch  = self.loss_fn(score_batch, y_batch_train)
@@ -125,12 +141,13 @@ class Trainer:
 
     def fit(self):
         for _epoch in range(self.epoch):
+            # 保存当前训练轮数
             self._epoch = _epoch
             self._train_epoch()
             # 每训练完一轮，算一次准确率
             _acc = self._metric()
-            # 保存当前训练轮数
-
+            # 学习率更新
+            self.lr_scheduler.step()
             # 每训练完一轮保存一个检查点
             self._save(_acc=_acc)
 
@@ -185,10 +202,13 @@ if __name__ == '__main__':
         epoch=100,
         batch_size=16,
         freeze=False,
-        split_train_test_dir=True
+        split_train_test_dir=True,
+        lr=0.001
     )
-    trainer.export(
-        ckpt_path=r'D:\MySoftWare\Pycharm_20250301\PythonProject\CV_Project\projects\cv_classify\src\output\0.24643.pkl',
-        format='onnx'
-    )
+    trainer.fit()
+    #
+    # trainer.export(
+    #     ckpt_path=r'D:\MySoftWare\Pycharm_20250301\PythonProject\CV_Project\projects\cv_classify\src\output\0.24643.pkl',
+    #     format='onnx'
+    # )
 

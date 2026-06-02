@@ -78,6 +78,9 @@ class ClassifyNetwork_Vgg16(nn.Module):
     def __init__(self, num_classes, freeze:Union[int, bool] = None):
         super().__init__()
         vgg_bn = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT)
+        # 对迁移过来的模型做一个标志位，用于模型训练的时候，给这部分用小的学习率
+        for para in vgg_bn.parameters():
+            para.is_init_rand = False
         # 写冻结结构：
         # 1.为bool值时，为True，全部冻结
         # 2.为数字时，表示冻结前int层
@@ -103,7 +106,8 @@ class ClassifyNetwork_Vgg16(nn.Module):
 
         # 分类的最后一层替换成我们需要的类别数
         vgg_bn.classifier[-1] = nn.Linear(in_features=4096, out_features=num_classes, bias=True)
-
+        for para in vgg_bn.classifier[-1].parameters():
+            para.is_init_rand = True
         self.vgg_bn = vgg_bn
         print(self.vgg_bn)
 
