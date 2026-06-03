@@ -1,9 +1,5 @@
 """
-
 Desc：模型训练
-_train_epoch
-_val_epoch
-
 """
 import os.path
 from typing import Union, Literal
@@ -25,7 +21,7 @@ __all__ = {
 
 }
 
-
+from utils.stop_early import Stop_early
 
 
 class Trainer:
@@ -36,7 +32,8 @@ class Trainer:
                  batch_size:int = 16,
                  freeze:Union[bool, int] = False,
                  split_train_test_dir = True, # 为true时会把all文件夹分成train,val两个文件夹
-                 lr:float = 0.01
+                 lr:float = 0.01,
+                 max_epoch:int = 1 # 最大准确率不增长停止训练轮数
                  ):
 
         self.train_dataloader, self.test_dataloader, self.class_name = Get_dataloaer(
@@ -51,6 +48,7 @@ class Trainer:
         self.loss = []
         self.epoch = epoch
         self.lr = lr
+        self.stop_early = Stop_early(max_epoch=max_epoch)
 
 
         self.best_acc = 0
@@ -129,7 +127,7 @@ class Trainer:
                 y_pre_all.extend(score_test.cpu().numpy())
             y_pre_all = np.argmax(y_pre_all, axis=1)
             _acc = accuracy_score(y_true_all, y_pre_all)
-            print(f'第{self._epoch}/{self.epoch}轮，验证集准确率为：{_acc}')
+            print(f'第{self._epoch + 1}/{self.epoch}轮，验证集准确率为：{_acc}')
             self.writer.add_scalar('acc', scalar_value=_acc, global_step=self._epoch)
             return _acc
 
@@ -168,6 +166,17 @@ class Trainer:
             # 每训练完一轮保存一个检查点
             self._save(_acc=_acc)
 
+            # 判断是否需要提前停止训练
+            self.stop_early.judge_stop(current_acc=self.best_acc)
+
+            if self.stop_early.is_stop:
+                print(f'连续{self.stop_early.max_epoch}轮准确率没有提升，训练提前停止，最大的准确率为{self.best_acc}')
+                break
+
+
+        # 训练完毕后关闭日志
+        self.writer.close()
+
     # 从检查点导出模型文件
     def export(self, ckpt_path:str, format: Literal['torchscript', 'onnx'] = 'torchscript'):
         # 导入检查点模型
@@ -181,9 +190,10 @@ class Trainer:
         best_acc = ckpt['best_acc']
         class_name = ckpt['class_name']
         net = build_network('vgg', num_classes=len(class_name), freeze=False)
-        net.load_state_dict(state_dict=ckpt['state_dict'], strict=True)
-        print(f'检查点导入成功，参数恢复成功！...')
+        missing_keys, unexpected_keys = net.load_state_dict(state_dict=ckpt['state_dict'], strict=True)
+        print(f'检查点导入成功，参数恢复成功！missing_keys：{missing_keys}, unexpected_keys{unexpected_keys}...')
         net.eval()
+
         # 判断导出格式
         if format == 'torchscript':
 
