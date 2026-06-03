@@ -46,6 +46,7 @@ class Predictor:
             if isinstance(img, str):
                 # 如果传的是str，则需要用Pil读取，并用和训练时相同的预处理方式
                 img = Image.open(fp=img)
+            # 如果传的是Image.Image对象，则可以直接进行转换
             img = my_transform(img)
             img = torch.unsqueeze(img, dim=0)
             prob = self.model(img)
@@ -53,13 +54,14 @@ class Predictor:
             if isinstance(img, str):
             # 如果传的是str，则需要用Pil读取，并用和训练时相同的预处理方式
                 img = Image.open(fp=img)
-                img = my_transform(img)
-                img = torch.unsqueeze(img, dim=0)
-                img = img.numpy()
-                prob = self.session.run(None, input_feed={self.session.get_inputs()[0].name: img})[0]
-                # print(self.session.get_inputs()[0])
-                # print(self.session.get_outputs()[0])
-                prob = torch.asarray(prob)
+            img = my_transform(img)
+            img = torch.unsqueeze(img, dim=0)
+            img = img.numpy()
+            prob = self.session.run(None, input_feed={self.session.get_inputs()[0].name: img})[0]
+            # print(self.session.get_inputs()[0])
+            # print(self.session.get_outputs()[0])
+            prob = torch.asarray(prob)
+
 
         # 对输出进行后处理，返回格式为[{'类别'：概率}...]
         values, indices = torch.topk(prob, k=top_k, dim=-1)
