@@ -1,6 +1,7 @@
 """
 Desc：模型训练
 """
+import json
 import os.path
 from typing import Union, Literal
 
@@ -227,7 +228,7 @@ class Trainer:
             map_location='cpu',
             weights_only=False
         )
-        print(ckpt.keys())
+
         best_acc = ckpt['best_acc']
         class_name = ckpt['class_name']
         net = build_network('vgg', num_classes=len(class_name), freeze=False)
@@ -240,22 +241,34 @@ class Trainer:
 
             ts = torch.jit.trace_module(net, inputs={'forward': torch.rand(1, 3, 224, 224)})
             f = os.path.join(os.path.dirname(ckpt_path), f'{best_acc:.5f}.pt')
+            extra_files = {'class_name': json.dumps(class_name), 'best_acc': json.dumps(best_acc)}
             torch.jit.save(
                 ts,
-                f=f
+                f=f,
+                _extra_files=extra_files
             )
         elif format == 'onnx':
             f = os.path.join(os.path.dirname(ckpt_path), f'{best_acc:.5f}.onnx')
+            extra_files = {
+                'best_acc': best_acc,
+                'class_name': class_name,
+            }
+            output_path = os.path.join(os.path.dirname(f), f'{best_acc:.5f}.json')
+            with open(output_path, mode='w', encoding='utf-8') as file:
+                json.dump(extra_files, fp=file, indent=4, ensure_ascii=False)
+                print(f'额外参数{[key for key in extra_files]}成功保存到json文件，路径为：{output_path}')
             torch.onnx.export(
                 model=net,
                 args=(torch.rand(1, 3, 224, 224),),
                 f=f
             )
+            print('开启onnx模型检查...')
+            onnx_model = onnx.load(f)
+            onnx.checker.check_model(onnx_model)
+            print('模型检查通过...')
+
         print(f'{format}模型导出成功，path:{f}')
-        print('开启模型检查...')
-        onnx_model = onnx.load(f)
-        onnx.checker.check_model(onnx_model)
-        print('模型检查通过...')
+
 
 
 
@@ -274,11 +287,11 @@ if __name__ == '__main__':
         lr=0.001,
         need_resume=False
     )
-    trainer.fit()
+    # trainer.fit()
     #
-    # trainer.export(
-    #     ckpt_path=r'D:\MySoftWare\Pycharm_20250301\PythonProject\CV_Project\projects\cv_classify\src\output\0.24643.pkl',
-    #     format='onnx'
-    # )
+    trainer.export(
+        ckpt_path=r'D:\MySoftWare\Pycharm_20250301\PythonProject\CV_Project\projects\cv_classify\src\output\0.95000.pkl',
+        format='onnx'
+    )
     # trainer.resume()
 

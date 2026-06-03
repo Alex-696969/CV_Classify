@@ -78,7 +78,7 @@ def load_transform(train=True):
             transforms.ToImage(),
             Letterbox(size=224),
             transforms.ToDtype(dtype=torch.float32, scale=True)
-        ])
+        ]) # shape [c, h, w]
     return my_transform
 
 
