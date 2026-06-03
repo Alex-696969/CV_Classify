@@ -33,7 +33,8 @@ class Trainer:
                  freeze:Union[bool, int] = False,
                  split_train_test_dir = True, # 为true时会把all文件夹分成train,val两个文件夹
                  lr:float = 0.01,
-                 max_epoch:int = 1 # 最大准确率不增长停止训练轮数
+                 max_epoch:int = 20, # 最大准确率不增长停止训练轮数
+                 need_resume:bool = False
                  ):
 
         self.train_dataloader, self.test_dataloader, self.class_name = Get_dataloaer(
@@ -41,6 +42,7 @@ class Trainer:
             split_train_test_dir=split_train_test_dir,
             batch_size=batch_size
         )()
+        self.ouput_dir = os.path.join(os.path.dirname(__file__), 'output')  # 静态
         self.class_num = class_num
         self.module = build_network('vgg', num_classes=self.class_num, freeze=False)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -49,18 +51,24 @@ class Trainer:
         self.epoch = epoch
         self.lr = lr
         self.stop_early = Stop_early(max_epoch=max_epoch)
+        self.need_resume = need_resume
+
+
 
 
         self.best_acc = 0
         self._epoch = 0
         self.train_batch = 0
-        self.train_batch_num = len(self.train_dataloader)
+        self.train_batch_num = len(self.train_dataloader) # 静态
 
-        self.ouput_dir = os.path.join(os.path.dirname(__file__), 'output')
+
         self.writer = Logger(output_dir=self.ouput_dir).build_logger()
         # 记录训练集损失，验证集的准确率，学习率变化
         self.opt, self.lr_scheduler = self._opt_lr()
-        self.writer.add_graph(model=self.module, input_to_model=torch.rand(1, 3, 224, 224), verbose=True)
+        self.writer.add_graph(model=self.module, input_to_model=torch.rand(1, 3, 224, 224), verbose=False)
+
+        if self.need_resume:
+            self.resume()
 
 
 
@@ -94,10 +102,10 @@ class Trainer:
             x_batch_train = x_batch_train.to(device=self.device)
             y_batch_train = y_batch_train.to(device=self.device)
             # 测试用
-            if k == 10:
-                break
-            else:
-                k += 1
+            # if k == 10:
+            #     break
+            # else:
+            #     k += 1
             # 前向执行算损失
             score_batch = self.module(x_batch_train)
             loss_batch  = self.loss_fn(score_batch, y_batch_train)
@@ -133,9 +141,9 @@ class Trainer:
 
     def _save(self, _acc):
         os.makedirs(self.ouput_dir, exist_ok=True)
-
+        # 保存最优检查点
         if _acc > self.best_acc:
-            # 删除上一个pkl
+            # 删除上一个最优pkl
             last_model_path = os.path.join(self.ouput_dir, f'{self.best_acc:.5f}.pkl')
             if os.path.exists(last_model_path):
                 os.remove(last_model_path)
@@ -149,12 +157,43 @@ class Trainer:
             }
 
             torch.save(ckpt, os.path.join(self.ouput_dir, f'{self.best_acc:.5f}.pkl'))
-            print(f'检查点保存成功，路径：'+ os.path.join(self.ouput_dir, f'{self.best_acc}.pkl'))
+            print(f'当前最优检查点保存成功，路径：'+ os.path.join(self.ouput_dir, f'{self.best_acc}.pkl'))
+        # 保存上一个训练完的模型，用来做断点续训练
+        ckpt = {
+            'module': self.module,
+            'best_acc': self.best_acc,
+            '_epoch': self._epoch,
+            'lr_scheduler': self.lr_scheduler
+
+        }
+        torch.save(ckpt, os.path.join(self.ouput_dir, 'last.pkl'))
+        print('检查点保存成功，路径：' + os.path.join(self.ouput_dir, 'last.pkl'))
+
+    def resume(self):
+        path = os.path.join(self.ouput_dir, 'last.pkl')
+        ckpt = torch.load(
+            f=path,
+            map_location='cpu',
+            weights_only=False
+        )
+        self.module = ckpt['module']
+        self._epoch = ckpt['_epoch']
+        self.best_acc = ckpt['best_acc']
+        self.lr_scheduler = ckpt['lr_scheduler']
+        print('='*20 + '\n断点恢复成功：')
+        print(f'当前训练轮次为第：{self._epoch+1}轮')
+        print(f'当前最优准确率为：{self.best_acc}')
+        print(f'当前学习率为：{self.lr_scheduler.get_last_lr()}')
+        print('=' * 20)
+
+
+
+
 
     def fit(self):
-        for _epoch in range(self.epoch):
+        for _epoch in range(self._epoch, self.epoch):
             # 保存当前训练轮数
-            self._epoch = _epoch + 1
+
             self._train_epoch()
             # 每训练完一轮，算一次准确率
             _acc = self._metric()
@@ -163,11 +202,13 @@ class Trainer:
             self.lr_scheduler.step()
             self.writer.add_scalar('lr1_migrate', scalar_value=self.lr_scheduler.get_last_lr()[0], global_step=self._epoch)
             self.writer.add_scalar('lr2_origin', scalar_value=self.lr_scheduler.get_last_lr()[1], global_step=self._epoch)
+
+            self._epoch = _epoch + 1
             # 每训练完一轮保存一个检查点
             self._save(_acc=_acc)
 
             # 判断是否需要提前停止训练
-            self.stop_early.judge_stop(current_acc=self.best_acc)
+            self.stop_early.judge_stop(current_acc=_acc)
 
             if self.stop_early.is_stop:
                 print(f'连续{self.stop_early.max_epoch}轮准确率没有提升，训练提前停止，最大的准确率为{self.best_acc}')
@@ -230,7 +271,8 @@ if __name__ == '__main__':
         batch_size=16,
         freeze=False,
         split_train_test_dir=True,
-        lr=0.001
+        lr=0.001,
+        need_resume=False
     )
     trainer.fit()
     #
@@ -238,4 +280,5 @@ if __name__ == '__main__':
     #     ckpt_path=r'D:\MySoftWare\Pycharm_20250301\PythonProject\CV_Project\projects\cv_classify\src\output\0.24643.pkl',
     #     format='onnx'
     # )
+    # trainer.resume()
 
